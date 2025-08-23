@@ -1,2 +1,2 @@
 # Super-LIO
-A high-performance and versatile LiDAR-Inertial Odometry system.
+A Robust and Efficient LiDAR-Inertial Odometry System with a Compact Mapping Strategy.
