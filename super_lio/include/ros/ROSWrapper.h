@@ -59,6 +59,7 @@ public:
 
   void clear(){
     lidar_buffer_.clear();
+    lidar_aux_buffer_.clear();
     imu_buffer_.clear();
     lidar_pushed_ = false;
     last_timestamp_imu_ = -1.0;
@@ -67,6 +68,7 @@ public:
 
   void pub_odom(const NavState&);
   void pub_cloud_world(const BASIC::CloudPtr& pc, double time);
+  void pub_cloud_body_fusion(const BASIC::CloudPtr& pc_body_primary, double time);
   void pub_cloud2planner(const BASIC::CloudPtr& pc, double time);
   void pub_cloud_world_pose(const BASIC::CloudPtr& pc, 
                             const NavState& state);
@@ -88,6 +90,8 @@ private:
   void imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg);
   void livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr msg);
   void stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
+  void livoxAuxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr msg);
+  void stdAuxHandler(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
 
   void setupParams();
   void setupIO();
@@ -97,9 +101,16 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu_;
   rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr sub_lidar_;
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_lidar_std_;
+  rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr sub_lidar_aux_;
+  rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr sub_lidar_aux_std_;
 
   std::deque<IMUData>   imu_buffer_;
   std::deque<LidarData> lidar_buffer_;
+  struct AuxLidarFrame {
+    BASIC::CloudPtr cloud_lidar_primary;
+    double stamp_sec = 0.0;
+  };
+  std::deque<AuxLidarFrame> lidar_aux_buffer_;
   bool lidar_pushed_ = false;
   double last_timestamp_imu_ = -1.0;
   double last_timestamp_lidar_ = -1.0;
@@ -120,6 +131,7 @@ private:
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_robo_odom_;  /// IMU fre   --> Robot frame
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub_path_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_world_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_fusion_body_;
 };
 
 } // namespace END.

@@ -125,7 +125,11 @@ bool ESKF::Predict(const IMUData& imu, DynamicState& state_imu, DynamicState& st
 
   double dt = imu.secs - forward_time_;
 
-  if(dt < 0 || dt > 0.2){
+  if(dt <= 1e-9 || dt > 0.2){
+    if (dt <= 1e-9) {
+      forward_time_ = imu.secs;
+      forward_last_imu_ = imu;
+    }
     return false;
   }
 
@@ -186,6 +190,12 @@ bool ESKF::Predict(const IMUData& imu) {
     current_time_ = current_obs_time_;
   }else{
     dt = imu.secs - last_imu_time_;
+  }
+
+  if (dt <= 1e-9 || dt > 0.2) {
+    last_imu_time_ = imu.secs;
+    last_imu_ = imu;
+    return false;
   }
 
   V3 acc = 0.5 * (imu.acc + last_imu_.acc);

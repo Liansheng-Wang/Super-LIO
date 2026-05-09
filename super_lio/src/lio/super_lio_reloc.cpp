@@ -1,6 +1,7 @@
 
 #include "lio/super_lio_reloc.h"
 
+#include <cmath>
 #include <sys/resource.h>
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
@@ -179,7 +180,17 @@ bool SuperLIOReLoc::kf_init(){
 
   LOG(INFO) << YELLOW << " ---> INIT start... obs_data size: " << init_obs_data_->size() << " target size: " << point_map_->size() << RESET;
 
-  V3 gravity = - mean_acce * g_gravity_norm / mean_acce.norm();
+  const double mean_acce_norm = mean_acce.norm();
+  if (!std::isfinite(mean_acce_norm) || mean_acce_norm < 1e-3) {
+    LOG(WARNING) << YELLOW
+                 << " ---> [SuperLIO-ReLoc]: invalid IMU mean acceleration norm ("
+                 << mean_acce_norm
+                 << "), waiting for valid IMU data before KF init."
+                 << RESET;
+    return false;
+  }
+
+  V3 gravity = - mean_acce * g_gravity_norm / mean_acce_norm;
   V3 ref_gravity(0, 0, - g_gravity_norm);
   M3 init_rot = Quat::FromTwoVectors(gravity, ref_gravity).toRotationMatrix();
   V3 n = init_rot.col(0);
@@ -246,7 +257,7 @@ bool SuperLIOReLoc::kf_init(){
   options.num_iterations_ = g_kf_max_iterations;
   options.quit_eps_ = g_kf_quit_eps;
 
-  float imu_scale = g_gravity_norm / mean_acce.norm();
+  float imu_scale = g_gravity_norm / mean_acce_norm;
   kf_->SetInitialConditions(options, mean_gyro, V3::Zero(), imu_scale, ref_gravity);
   auto state = kf_->GetSysState();
   /// The horizontal initial state of the imu in the robot coordinate system.

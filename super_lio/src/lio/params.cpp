@@ -23,6 +23,14 @@ namespace LI2Sup{
   
   string g_imu_topic;
   string g_lidar_topic;
+  bool g_multi_lidar_enable = false;
+  string g_lidar_topic_aux;
+  int g_lidar_type_aux = 1;
+  vector<double> g_extrinsic_lidar2_lidar1;
+  double g_aux_time_sync_max_diff = -1.0;
+  int g_aux_buffer_max_size = 32;
+  string g_multi_fused_topic = "/cloud_lidar2_filtered";
+  string g_multi_fused_frame_id = "imu";
 
   int    g_lidar_type;
   float  g_blind2;

@@ -6,12 +6,25 @@
     lio.map.map_name: "map.pcd"
     lio.map.ds_size: 0.25
     lio.map.save_interval: 500
-
+    
     lio.ros.lidar_topic: "/livox/lidar"
     lio.ros.imu_topic: "/livox/imu"
 
+    lio.multi.enable: true
+    lio.multi.lidar2.topic: "/livox/lidar_2"
+    lio.multi.lidar2.type: 1
+    lio.multi.lidar2.extrinsic_lidar2_lidar1: [0.5, 0.0, 0.0,
+                                               0.9659, 0.0, -0.2588,
+                                               0.0, 1.0, 0.0,
+                                               0.2588, 0.0, 0.9659]
+    lio.multi.aux_time_sync_max_diff: -1.0
+    lio.multi.aux_buffer_max_size: 32
+    lio.multi.fused_topic: "/cloud_lidar2_filtered"
+    lio.multi.fused_frame_id: "imu"
+    
+
     lio.sensor.lidar_type: 1
-    lio.sensor.blind: 2.0
+    lio.sensor.blind: 1.0
     lio.sensor.maxrange: 60.0
     lio.sensor.filter_rate: 3
     lio.sensor.enable_downsample: true

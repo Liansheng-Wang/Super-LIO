@@ -1,6 +1,7 @@
 
 #include "lio/super_lio.h"
 
+#include <cmath>
 #include <sys/resource.h>
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
@@ -128,7 +129,17 @@ bool SuperLIO::kf_init(){
     return false;
   }
 
-  V3 gravity = - mean_acce * g_gravity_norm / mean_acce.norm();
+  const double mean_acce_norm = mean_acce.norm();
+  if (!std::isfinite(mean_acce_norm) || mean_acce_norm < 1e-3) {
+    LOG(WARNING) << YELLOW
+                 << " ---> [SuperLIO]: invalid IMU mean acceleration norm ("
+                 << mean_acce_norm
+                 << "), waiting for valid IMU data before KF init."
+                 << RESET;
+    return false;
+  }
+
+  V3 gravity = - mean_acce * g_gravity_norm / mean_acce_norm;
   V3 ref_gravity(0, 0, - g_gravity_norm);
   M3 init_rot = Quat::FromTwoVectors(gravity, ref_gravity).toRotationMatrix();
   V3 n = init_rot.col(0);
@@ -148,7 +159,7 @@ bool SuperLIO::kf_init(){
   options.num_iterations_ = g_kf_max_iterations;
   options.quit_eps_ = g_kf_quit_eps;
 
-  float imu_scale = g_gravity_norm / mean_acce.norm();
+  float imu_scale = g_gravity_norm / mean_acce_norm;
   kf_->SetInitialConditions(options, mean_gyro, V3::Zero(), imu_scale, ref_gravity);
   auto state = kf_->GetSysState();
   state.R = SO3(rot);
@@ -395,16 +406,44 @@ void SuperLIO::Propagation_Undistort(){
         pt_full.z = eigen_point[2];
         continue;
       }
+      if (propagate_states_.size() < 2) {
+        V3 raw(pt.x, pt.y, pt.z);
+        V3 eigen_point = TLI_R * raw + TLI_t;
+        pt_full.x = eigen_point[0];
+        pt_full.y = eigen_point[1];
+        pt_full.z = eigen_point[2];
+        continue;
+      }
+
       auto match_iter = propagate_states_.begin();
-      for (auto iter = propagate_states_.begin(); iter != propagate_states_.end(); ++iter) {
+      bool found_interval = false;
+      for (auto iter = propagate_states_.begin(); std::next(iter) != propagate_states_.end(); ++iter) {
         auto next_iter = std::next(iter);
         if (iter->time < query_time && next_iter->time >= query_time) {
           match_iter = iter;
+          found_interval = true;
           break;
+        }
+      }
+      if (!found_interval) {
+        auto iter = std::prev(propagate_states_.end(), 2);
+        auto next_iter = std::next(iter);
+        if (query_time <= iter->time) {
+          match_iter = propagate_states_.begin();
+        } else if (query_time >= next_iter->time) {
+          match_iter = iter;
         }
       }
       auto match_iter_n = std::next(match_iter);
       double dt = match_iter_n->time - match_iter->time;
+      if (dt <= 1e-9) {
+        V3 raw(pt.x, pt.y, pt.z);
+        V3 eigen_point = TLI_R * raw + TLI_t;
+        pt_full.x = eigen_point[0];
+        pt_full.y = eigen_point[1];
+        pt_full.z = eigen_point[2];
+        continue;
+      }
       double s = (query_time - match_iter->time) / dt;
       R_h = match_iter->R;
       R_t = match_iter_n->R;
@@ -558,6 +597,14 @@ void SuperLIO::UpdateMap() {
 void SuperLIO::Output(){
   auto state = kf_->GetNavState();
   data_wrapper_->pub_odom(state);  
+
+  // Multi-lidar fusion output in body/IMU frame:
+  // primary scan comes from current undistorted frame, auxiliary scan is matched by timestamp in ROSWrapper.
+  if (g_visual_dense) {
+    data_wrapper_->pub_cloud_body_fusion(scan_undistort_full_, state.timestamp);
+  } else {
+    data_wrapper_->pub_cloud_body_fusion(ds_undistort_, state.timestamp);
+  }
 
   Eigen::Matrix4f transformation = Eigen::Matrix4f::Identity();
   transformation.block<3, 3>(0, 0) = state.R.R_.cast<float>();
