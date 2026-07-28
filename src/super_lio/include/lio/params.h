@@ -41,7 +41,9 @@ namespace LI2Sup{
   extern std::string g_imu_topic;
   extern std::string g_lidar_topic;
 
-  extern int   g_lidar_type;       // 1: mid360, 2: hesai16, 3: velo16, 4: velo32, 5: vel_nclt, 6: ls16 
+  extern int   g_lidar_type;       // 1: mid360, 2: hesai16, 3: velo16, 4: velo32, 5: vel_nclt, 6: ls16, 7: ouster, 8: rs_airy
+  extern int   g_scan_line;      // number of scan lines (96 for Airy)
+  extern int   g_timestamp_unit; // 0=sec, 1=ms, 2=us, 3=ns
   extern float g_blind2;
   extern float g_maxrange2;
   extern int   g_filter_rate;

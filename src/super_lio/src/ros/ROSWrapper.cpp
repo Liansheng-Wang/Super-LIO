@@ -43,6 +43,12 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<int>("lio.sensor.lidar_type", 0);
   node.get_parameter("lio.sensor.lidar_type", g_lidar_type);
 
+  node.declare_parameter<int>("lio.sensor.scan_line", 96);
+  node.get_parameter("lio.sensor.scan_line", g_scan_line);
+
+  node.declare_parameter<int>("lio.sensor.timestamp_unit", 0);
+  node.get_parameter("lio.sensor.timestamp_unit", g_timestamp_unit);
+
   double temp_range_dis;
   node.declare_parameter<double>("lio.sensor.blind", 0.0);
   node.get_parameter("lio.sensor.blind", temp_range_dis);
@@ -440,7 +446,9 @@ void ROSWrapper::livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr
   lidar_buffer_.push_back(lidar_data);
 }
 
-
+/**
+* 不同雷达处理方法
+*/
 void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr msg){
   if(msg->data.size() < 10) return;
   
@@ -519,6 +527,41 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
           pt.x, pt.y, pt.z, pt.intensity, offset_time);
     }
     lidar_data.end_time = lidar_data.start_time + offset_time;
+    break;
+  }
+  case LID_TYPE::RS_AIRY:
+  {
+    // Compute timestamp unit scale: convert input unit to seconds
+    double timestamp_unit_scale;
+    switch (g_timestamp_unit) {
+      case 0: timestamp_unit_scale = 1.0;    break;  // seconds
+      case 1: timestamp_unit_scale = 1e-3;   break;  // milliseconds
+      case 2: timestamp_unit_scale = 1e-6;   break;  // microseconds
+      case 3: timestamp_unit_scale = 1e-9;   break;  // nanoseconds
+      default: timestamp_unit_scale = 1.0;   break;
+    }
+
+    pcl::PointCloud<robosenseM1_ros::Point> pl_orig;
+    pcl::fromROSMsg(*msg, pl_orig);
+    std::size_t plsize = pl_orig.size();
+    if (plsize == 0) return;
+
+    lidar_data.pc->reserve(plsize / g_filter_rate + 1);
+
+    const double first_timestamp = pl_orig.points[0].timestamp;
+    lidar_data.start_time = first_timestamp * timestamp_unit_scale;
+    double end_offset = 0.0;
+
+    // Organized point cloud: width = scan lines, height = points per line
+    for (std::size_t i = 0; i < plsize; i += g_filter_rate) {
+      auto& pt = pl_orig.points[i];
+      if (!validPoint(pt.x, pt.y, pt.z)) continue;
+      offset_time = (pt.timestamp - first_timestamp) * timestamp_unit_scale;
+      lidar_data.pc->emplace_back(
+          pt.x, pt.y, pt.z, pt.intensity, offset_time);
+      end_offset = offset_time;
+    }
+    lidar_data.end_time = lidar_data.start_time + end_offset;
     break;
   }
   default:

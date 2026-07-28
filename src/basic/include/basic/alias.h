@@ -135,8 +135,28 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(LivoxSIM::Point,
                                   (float, intensity, intensity)
                                   )
 
+// RoboSense M1 / Airy
+namespace robosenseM1_ros {
+struct EIGEN_ALIGN16 Point {
+    PCL_ADD_POINT4D
+    PCL_ADD_INTENSITY;
+    uint16_t ring;
+    double timestamp;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+};
+}
+
+POINT_CLOUD_REGISTER_POINT_STRUCT(robosenseM1_ros::Point,
+                                  (float, x, x)
+                                  (float, y, y)
+                                  (float, z, z)
+                                  (float, intensity, intensity)
+                                  (uint16_t, ring, ring)
+                                  (double, timestamp, timestamp)
+                                  )
+
 // x, y, z, intensity, tag, line, timestamp
- 
+
 namespace BASIC {
 
 // using scalar = double;

@@ -69,6 +69,17 @@ ros2 launch super_lio Livox_mid360.py
 
 ```
 
+#### 📡 Supported LiDARs
+
+Besides Livox Mid360, Super-LIO also supports Hesai, Velodyne, Ouster, NCLT and **RoboSense M1/Airy**. Each sensor has its own config/launch pair under `src/super_lio/config` and `src/super_lio/launch`. For RoboSense M1/Airy:
+
+```bash
+source install/setup.bash
+ros2 launch super_lio robosense_airy.py
+```
+
+Adjust `lio.ros.lidar_topic` / `lio.ros.imu_topic`, `lio.sensor.scan_line` and `lio.sensor.timestamp_unit` in `config/robosense_airy.yaml` to match your driver's topics and timestamp units (0=sec, 1=ms, 2=us, 3=ns).
+
 #### 🔁 Relocalization Mode
 Super-LIO supports relocalization using a pre-built map, allowing the system to resume localization from a saved map without restarting the mapping process.
 This mode is useful for long-term deployment, repeated missions, or recovery after tracking loss.
@@ -136,5 +147,8 @@ We kindly recommend to cite [our paper](https://ieeexplore.ieee.org/document/113
 
 - 2026-06-07
  - [Important revisions]: Fixed some known errors and improved algorithm accuracy!
- 
+
+- 2026-07-28
+ - Add support for RoboSense M1/Airy LiDAR (`robosense_airy.yaml` / `robosense_airy.py`).
+
 </details>

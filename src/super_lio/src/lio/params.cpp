@@ -25,6 +25,8 @@ namespace LI2Sup{
   string g_lidar_topic;
 
   int    g_lidar_type;
+  int    g_scan_line = 96;
+  int    g_timestamp_unit = 0;
   float  g_blind2;
   float  g_maxrange2;
   int    g_filter_rate;
