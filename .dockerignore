@@ -1,0 +1,9 @@
+.git
+.github
+**/.vscode
+build
+install
+log
+docs
+**/map
+src/map2

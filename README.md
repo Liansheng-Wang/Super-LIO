@@ -149,6 +149,6 @@ We kindly recommend to cite [our paper](https://ieeexplore.ieee.org/document/113
  - [Important revisions]: Fixed some known errors and improved algorithm accuracy!
 
 - 2026-07-28
- - Add support for RoboSense M1/Airy LiDAR (`robosense_airy.yaml` / `robosense_airy.py`).
+  - Add support for RoboSense M1/Airy LiDAR (`robosense_airy.yaml` / `robosense_airy.py`).
 
 </details>

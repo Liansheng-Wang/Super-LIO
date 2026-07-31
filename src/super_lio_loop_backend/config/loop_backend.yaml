@@ -1,0 +1,48 @@
+/**:
+  ros__parameters:
+    loop.keyframe_topic: "/super_lio/keyframe"
+    loop.candidate_topic: "/super_lio_loop_backend/loop_candidates"
+
+    loop.btc.useful_corner_num: 100
+    loop.btc.plane_merge_normal_threshold: 0.1
+    loop.btc.plane_merge_distance_threshold: 0.3
+    loop.btc.plane_detection_threshold: 0.01
+    loop.btc.voxel_size: 1.0
+    loop.btc.voxel_init_num: 10
+    loop.btc.projection_plane_num: 2
+    loop.btc.projection_resolution: 0.5
+    loop.btc.projection_height_increment: 0.1
+    loop.btc.projection_distance_min: 0.0
+    loop.btc.projection_distance_max: 5.0
+    loop.btc.summary_min_threshold: 10.0
+    loop.btc.line_filter_enable: 1
+    loop.btc.touch_filter_enable: 0
+    loop.btc.descriptor_near_num: 15.0
+    loop.btc.descriptor_min_length: 2.0
+    loop.btc.descriptor_max_length: 50.0
+    loop.btc.non_max_suppression_radius: 2.0
+    loop.btc.side_resolution: 0.2
+    loop.btc.skip_near_num: 30
+    loop.btc.candidate_num: 20
+    loop.btc.rough_distance_threshold: 0.01
+    loop.btc.similarity_threshold: 0.7
+    loop.btc.icp_threshold: 0.15
+    loop.btc.normal_threshold: 0.2
+    loop.btc.distance_threshold: 0.5
+    loop.btc.score_threshold: 0.45
+    loop.btc.icp_eigenvalue_threshold: 14.0
+
+    # Order: roll, pitch, yaw, x, y, z standard deviations.
+    loop.pgo.prior_noise: [0.000001, 0.000001, 0.000001, 0.000001, 0.000001, 0.000001]
+    loop.pgo.odom_noise: [0.02, 0.02, 0.02, 0.05, 0.05, 0.05]
+    loop.pgo.loop_noise: [0.01, 0.01, 0.01, 0.03, 0.03, 0.03]
+    loop.pgo.relinearize_threshold: 0.01
+    loop.pgo.relinearize_skip: 1
+
+    loop.gba.enable: true
+    loop.gba.voxel_size: 1.0
+    loop.gba.min_eigen_value: 0.01
+    loop.gba.eigen_ratio_thresholds: [0.01, 0.01, 0.01]
+    loop.gba.max_layer: 2
+    loop.gba.max_iterations: 5
+    loop.gba.thread_num: 2

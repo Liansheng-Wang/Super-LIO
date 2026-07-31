@@ -37,6 +37,14 @@ namespace LI2Sup{
   extern std::string g_save_map_dir;
   extern float g_map_ds_size;
   extern int   g_pcd_save_interval;
+
+  /// loop closure backend
+  extern bool g_enable_keyframe_pub;
+  extern double g_loop_kf_trans_thresh;
+  extern double g_loop_kf_rot_thresh;
+  extern std::string g_loop_keyframe_topic;
+  extern bool g_enable_backend;
+  extern double g_backend_service_timeout;
   
   extern std::string g_imu_topic;
   extern std::string g_lidar_topic;

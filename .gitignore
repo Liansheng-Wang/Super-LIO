@@ -7,3 +7,4 @@ install
 .catkin_workspace
 .catkin_tools
 src/CMakeLists.txt
+*map*

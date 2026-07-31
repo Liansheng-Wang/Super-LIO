@@ -1,0 +1,4 @@
+---
+uint32[] ids
+geometry_msgs/Pose[] corrected_poses
+bool success

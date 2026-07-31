@@ -18,6 +18,7 @@
 #include "common/timer.h"
 #include "params.h"
 #include "ESKF.h"
+#include "lio/keyframe_manager.h"
 #include "OctVoxMap/OctVoxMap.hpp"
 #include "OctVoxMap/VoxelGridFilter.h"
 #include "ros/ROSWrapper.h"
@@ -50,6 +51,8 @@ protected:
   virtual void Output();
   void caceData();
   void ProcessCaceMap();
+  void processLoopKeyframe();
+  bool saveCorrectedKeyframeMap();
 
   using StateFn = void (SuperLIO::*)();
   using OctVoxMapType = OctVoxMap<BASIC::V3, BASIC::scalar>;
@@ -79,6 +82,7 @@ protected:
   std::vector<std::pair<BASIC::M6, BASIC::V6>> H_R_;
   std::vector<std::array<double, 4>> abcd_vec_;
   int pcd_index_ = -1;
+  std::unique_ptr<KeyframeManager> keyframe_manager_;
 
   Timer time_record_;
 };
@@ -86,5 +90,4 @@ protected:
 } // namespace END.
 
 #endif
-
 

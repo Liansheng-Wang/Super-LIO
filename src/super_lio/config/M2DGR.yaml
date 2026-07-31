@@ -7,6 +7,13 @@
     lio.map.ds_size: 0.3
     lio.map.save_interval: 500
 
+    lio.loop.enable_keyframe_pub: false
+    lio.loop.kf_trans_thresh: 1.0
+    lio.loop.kf_rot_thresh: 15.0
+    lio.loop.keyframe_topic: "/super_lio/keyframe"
+    lio.loop.enable_backend: false
+    lio.loop.backend_service_timeout: 5.0
+
     lio.ros.lidar_topic: "/velodyne_points"
     lio.ros.imu_topic: "/handsfree/imu"
 

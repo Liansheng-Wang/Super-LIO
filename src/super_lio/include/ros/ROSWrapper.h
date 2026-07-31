@@ -30,6 +30,8 @@
 /// msgs
 #include "super_lio/msg/cloud_pose.hpp"
 #include "super_lio/msg/cloud_pose2.hpp"
+#include "super_lio_loop_msgs/msg/keyframe.hpp"
+#include "super_lio_loop_msgs/srv/get_corrected_poses.hpp"
 
 
 #include "lio/params.h"
@@ -75,6 +77,12 @@ public:
   void pub_cloud_body_pose( const BASIC::VV3& pc_body,
                             const NavState& state);  
   void pub_processing_time(double time, double current_time, double mean_time, double std_time);
+  void pub_keyframe(
+    std::uint32_t id, const NavState & state, const BASIC::CloudPtr & body_cloud);
+  bool request_corrected_poses(
+    std::vector<std::uint32_t> & ids,
+    std::vector<geometry_msgs::msg::Pose> & poses,
+    double timeout_seconds);
 
   void set_global_map(const BASIC::CloudPtr& global_map);
 
@@ -120,6 +128,10 @@ private:
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_robo_odom_;  /// IMU fre   --> Robot frame
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub_path_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_world_;
+  rclcpp::Publisher<super_lio_loop_msgs::msg::Keyframe>::SharedPtr
+    pub_keyframe_;
+  rclcpp::Client<super_lio_loop_msgs::srv::GetCorrectedPoses>::SharedPtr
+    corrected_pose_client_;
 };
 
 } // namespace END.

@@ -23,6 +23,7 @@ find_package(visualization_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(pcl_ros REQUIRED)
 find_package(livox_ros_driver2 REQUIRED)
+find_package(super_lio_loop_msgs REQUIRED)
 
 find_package(Eigen3 REQUIRED NO_MODULE)
 find_package(PCL REQUIRED)
@@ -55,22 +56,19 @@ file(GLOB_RECURSE LIO_LIB_HEADERS "include/lio/*.hpp" "include/lio/*.h")
 
 add_library(lio ${LIO_LIB_SRC} ${LIO_LIB_HEADERS})
 
-ament_target_dependencies(lio PUBLIC
-  rclcpp
-  std_msgs
-  geometry_msgs
-  sensor_msgs
-  visualization_msgs
-  nav_msgs
-  pcl_ros
-  livox_ros_driver2
-  basic
-  rosidl_default_runtime
-)
-
 target_link_libraries(lio PUBLIC
   Eigen3::Eigen
   ${PCL_LIBRARIES}
+  rclcpp::rclcpp
+  ${std_msgs_TARGETS}
+  ${geometry_msgs_TARGETS}
+  ${sensor_msgs_TARGETS}
+  ${visualization_msgs_TARGETS}
+  ${nav_msgs_TARGETS}
+  ${pcl_ros_TARGETS}
+  ${livox_ros_driver2_TARGETS}
+  ${super_lio_loop_msgs_TARGETS}
+  basic::basic
   glog
   pthread
   ${cpp_typesupport_target}

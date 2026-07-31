@@ -34,6 +34,26 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<int>("lio.map.save_interval", 1);
   node.get_parameter("lio.map.save_interval", g_pcd_save_interval);
 
+  node.declare_parameter<bool>("lio.loop.enable_keyframe_pub", false);
+  node.get_parameter("lio.loop.enable_keyframe_pub", g_enable_keyframe_pub);
+
+  node.declare_parameter<double>("lio.loop.kf_trans_thresh", 1.0);
+  node.get_parameter("lio.loop.kf_trans_thresh", g_loop_kf_trans_thresh);
+
+  node.declare_parameter<double>("lio.loop.kf_rot_thresh", 15.0);
+  node.get_parameter("lio.loop.kf_rot_thresh", g_loop_kf_rot_thresh);
+
+  node.declare_parameter<std::string>(
+    "lio.loop.keyframe_topic", "/super_lio/keyframe");
+  node.get_parameter("lio.loop.keyframe_topic", g_loop_keyframe_topic);
+
+  node.declare_parameter<bool>("lio.loop.enable_backend", false);
+  node.get_parameter("lio.loop.enable_backend", g_enable_backend);
+
+  node.declare_parameter<double>("lio.loop.backend_service_timeout", 5.0);
+  node.get_parameter(
+    "lio.loop.backend_service_timeout", g_backend_service_timeout);
+
   node.declare_parameter<std::string>("lio.ros.lidar_topic", "/lidar");
   node.get_parameter("lio.ros.lidar_topic", g_lidar_topic);
 
@@ -344,6 +364,17 @@ void ROSWrapper::setupIO(){
   pub_cloud_world_ =
     this->create_publisher<sensor_msgs::msg::PointCloud2>(
         "/lio/cloud_world", 10);
+
+  if (g_enable_keyframe_pub || g_enable_backend) {
+    pub_keyframe_ =
+      this->create_publisher<super_lio_loop_msgs::msg::Keyframe>(
+        g_loop_keyframe_topic, rclcpp::QoS(20).reliable());
+  }
+  if (g_enable_backend) {
+    corrected_pose_client_ =
+      this->create_client<super_lio_loop_msgs::srv::GetCorrectedPoses>(
+        "/super_lio_loop_backend/get_corrected_poses");
+  }
 
   tf_broadcaster_ =
       std::make_shared<tf2_ros::TransformBroadcaster>(this);
@@ -690,6 +721,69 @@ void ROSWrapper::pub_cloud_world(const CloudPtr& pc, double time){
   cloud.header.frame_id = "world";
   cloud.header.stamp = toRosTime(time);
   pub_cloud_world_->publish(cloud);
+}
+
+
+void ROSWrapper::pub_keyframe(
+  std::uint32_t id, const NavState & state, const CloudPtr & body_cloud)
+{
+  if (!pub_keyframe_ || !body_cloud || body_cloud->empty()) {
+    return;
+  }
+
+  super_lio_loop_msgs::msg::Keyframe message;
+  message.header.stamp = toRosTime(state.timestamp);
+  message.header.frame_id = "imu";
+  message.id = id;
+  message.world_pose.position.x = state.p[0];
+  message.world_pose.position.y = state.p[1];
+  message.world_pose.position.z = state.p[2];
+  const V4 q = state.R.coeffs();
+  message.world_pose.orientation.x = q[0];
+  message.world_pose.orientation.y = q[1];
+  message.world_pose.orientation.z = q[2];
+  message.world_pose.orientation.w = q[3];
+  pcl::toROSMsg(*body_cloud, message.cloud);
+  message.cloud.header = message.header;
+  pub_keyframe_->publish(message);
+}
+
+
+bool ROSWrapper::request_corrected_poses(
+  std::vector<std::uint32_t> & ids,
+  std::vector<geometry_msgs::msg::Pose> & poses,
+  double timeout_seconds)
+{
+  ids.clear();
+  poses.clear();
+  if (!corrected_pose_client_ || !rclcpp::ok()) {
+    return false;
+  }
+
+  const auto timeout = std::chrono::duration<double>(
+    std::max(0.0, timeout_seconds));
+  if (!corrected_pose_client_->wait_for_service(timeout)) {
+    return false;
+  }
+  auto request =
+    std::make_shared<super_lio_loop_msgs::srv::GetCorrectedPoses::Request>();
+  auto future = corrected_pose_client_->async_send_request(request);
+  const auto result = rclcpp::spin_until_future_complete(
+    shared_from_this(), future, timeout);
+  if (result != rclcpp::FutureReturnCode::SUCCESS) {
+    return false;
+  }
+
+  const auto response = future.get();
+  if (
+    !response->success ||
+    response->ids.size() != response->corrected_poses.size())
+  {
+    return false;
+  }
+  ids = response->ids;
+  poses = response->corrected_poses;
+  return true;
 }
 
 

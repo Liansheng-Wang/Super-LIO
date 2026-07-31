@@ -1,0 +1,178 @@
+name: Super-LIO Humble ARM64 Build
+
+on:
+  push:
+    branches:
+      - ros2
+    paths:
+      - "src/**"
+      - "docker/ci.Dockerfile"
+      - ".dockerignore"
+      - ".github/workflows/super-lio-humble-arm64-build.yml"
+  pull_request:
+    branches:
+      - ros2
+    paths:
+      - "src/**"
+      - "docker/ci.Dockerfile"
+      - ".dockerignore"
+      - ".github/workflows/super-lio-humble-arm64-build.yml"
+  workflow_dispatch:
+    inputs:
+      build_jobs:
+        description: Parallel build jobs
+        required: false
+        default: "4"
+        type: string
+      package_version:
+        description: Debian upstream version
+        required: false
+        default: "2.0.0"
+        type: string
+      swap_size_gb:
+        description: Swap size in GB
+        required: false
+        default: "16"
+        type: string
+
+concurrency:
+  group: super-lio-humble-arm64-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-humble-arm64:
+    name: build-humble-jammy-arm64
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 360
+    permissions:
+      contents: read
+
+    env:
+      ROS_DISTRO: humble
+      UBUNTU_CODENAME: jammy
+      PLATFORM: linux/arm64
+      BUILD_JOBS: ${{ inputs.build_jobs || '4' }}
+      PACKAGE_VERSION: ${{ inputs.package_version || '2.0.0' }}
+      LIVOX_DEB_TAG: "1.2.6.1"
+      LIVOX_DEB_VERSION: auto
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate inputs
+        run: |
+          set -eu
+          if ! echo "${BUILD_JOBS}" | grep -qE '^[1-9][0-9]*$'; then
+              echo "::error::build_jobs must be a positive integer, got '${BUILD_JOBS}'"
+              exit 1
+          fi
+          if ! echo "${PACKAGE_VERSION}" | grep -qE '^[0-9][0-9A-Za-z.+:~]*$'; then
+              echo "::error::Invalid package_version '${PACKAGE_VERSION}'"
+              exit 1
+          fi
+
+      - name: Free up disk space
+        run: |
+          set -eu
+          echo "=== Disk usage before cleanup ==="
+          df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost \
+                      "$AGENT_TOOLSDIRECTORY" /usr/local/lib/android \
+                      /usr/share/swift /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af || true
+          echo "=== Disk usage after cleanup ==="
+          df -h /
+
+      - name: Set up swap space
+        env:
+          REQUESTED_SWAP_GB: ${{ inputs.swap_size_gb || '16' }}
+        run: |
+          set -eu
+          SWAP_SIZE_GB="${REQUESTED_SWAP_GB}"
+          if ! echo "${SWAP_SIZE_GB}" | grep -qE '^[0-9]+$'; then
+              echo "::error::swap_size_gb must be an integer, got '${SWAP_SIZE_GB}'"
+              exit 1
+          fi
+
+          FREE_GB="$(df -BG --output=avail / | tail -1 | tr -dc '0-9')"
+          MAX_SWAP_GB=$((FREE_GB - 3))
+          if [ "${MAX_SWAP_GB}" -le 0 ] || [ "${SWAP_SIZE_GB}" -eq 0 ]; then
+              echo "Skip swap (requested=${SWAP_SIZE_GB}GB, free=${FREE_GB}GB)"
+              free -h
+              exit 0
+          fi
+          if [ "${SWAP_SIZE_GB}" -gt "${MAX_SWAP_GB}" ]; then
+              echo "::warning::Using ${MAX_SWAP_GB}GB swap to leave 3GB disk headroom."
+              SWAP_SIZE_GB="${MAX_SWAP_GB}"
+          fi
+
+          sudo swapoff -a
+          sudo rm -f /swapfile /mnt/swapfile
+          sudo fallocate -l "${SWAP_SIZE_GB}G" /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+          driver-opts: network=host
+
+      - name: Show build environment
+        run: |
+          set -eu
+          echo "Runner arch: $(uname -m)"
+          echo "Target:      ${ROS_DISTRO}/${UBUNTU_CODENAME}/arm64"
+          echo "Platform:    ${PLATFORM}"
+          echo "Build jobs:  ${BUILD_JOBS}"
+          echo "DEB version: ${PACKAGE_VERSION}"
+          free -h
+          df -h /
+
+      - name: Build, test, and package ROS packages
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/ci.Dockerfile
+          platforms: ${{ env.PLATFORM }}
+          target: export
+          build-args: |
+            ROS_DISTRO=${{ env.ROS_DISTRO }}
+            BUILD_JOBS=${{ env.BUILD_JOBS }}
+            PACKAGE_VERSION=${{ env.PACKAGE_VERSION }}
+            LIVOX_DEB_TAG=${{ env.LIVOX_DEB_TAG }}
+            LIVOX_DEB_VERSION=${{ env.LIVOX_DEB_VERSION }}
+          cache-from: type=gha,scope=super-lio-humble-jammy-arm64
+          cache-to: type=gha,mode=max,scope=super-lio-humble-jammy-arm64
+          outputs: type=local,dest=./ci_output
+
+      - name: Inspect generated DEB package
+        run: |
+          set -eu
+          DEB="$(find ci_output -maxdepth 1 -name '*.deb' -print -quit)"
+          if [ -z "${DEB}" ]; then
+              echo "::error::No .deb package was generated"
+              exit 1
+          fi
+          dpkg-deb -I "${DEB}"
+          dpkg-deb -c "${DEB}" > deb-contents.txt
+          for package in basic super_lio_loop_msgs super_lio_loop_backend super_lio; do
+              marker="./opt/ros/${ROS_DISTRO}/share/ament_index/resource_index/packages/${package}"
+              if ! grep -Fq "${marker}" deb-contents.txt; then
+                  echo "::error::Package '${package}' is missing from ${DEB}"
+                  exit 1
+              fi
+              echo "Packaged: ${package}"
+          done
+          ls -lh "${DEB}"
+
+      - name: Upload DEB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: super-lio-humble-arm64-deb
+          path: ci_output/*.deb
+          if-no-files-found: error
+          retention-days: 1

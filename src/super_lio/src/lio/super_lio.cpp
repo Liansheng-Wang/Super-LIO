@@ -2,6 +2,7 @@
 #include "lio/super_lio.h"
 
 #include <sys/resource.h>
+#include <unordered_map>
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
 #include <tbb/concurrent_vector.h>
@@ -74,6 +75,10 @@ void SuperLIO::init(){
 
   if(g_save_map){
     point_map_.reset(new PointCloudType());
+  }
+  if (g_enable_keyframe_pub || g_enable_backend) {
+    keyframe_manager_ = std::make_unique<KeyframeManager>(
+      g_loop_kf_trans_thresh, g_loop_kf_rot_thresh);
   }
   
   points_world_v3_.reserve(21000);
@@ -204,8 +209,24 @@ void SuperLIO::stateProcess(){
     Observe();
     UpdateMap();
   }
+  processLoopKeyframe();
   Output();
   caceData();
+}
+
+
+void SuperLIO::processLoopKeyframe()
+{
+  if (!keyframe_manager_) {
+    return;
+  }
+  const auto keyframe =
+    keyframe_manager_->consider(kf_->GetNavState(), ds_undistort_);
+  if (!keyframe) {
+    return;
+  }
+  data_wrapper_->pub_keyframe(
+    keyframe->id, keyframe->state, keyframe->cloud);
 }
 
 
@@ -312,6 +333,9 @@ void SuperLIO::ProcessCaceMap(){
 
 void SuperLIO::saveMap(){
   if(!g_save_map) return;
+  if (g_enable_backend && saveCorrectedKeyframeMap()) {
+    return;
+  }
   if(g_pcd_save_interval > 0){
     LOG(INFO) << YELLOW << " ---> Saving last cace ... " << RESET;
     if (point_map_->size() > 0) {
@@ -347,6 +371,101 @@ void SuperLIO::saveMap(){
     LOG(INFO) << GREEN << " ---> Save map success. File: " << map_name << RESET;
     LOG(INFO) << GREEN << " ---> Map size: " << latst_map.size() << RESET;
   }
+}
+
+
+bool SuperLIO::saveCorrectedKeyframeMap()
+{
+  if (!keyframe_manager_ || keyframe_manager_->keyframes().empty()) {
+    return false;
+  }
+
+  std::vector<std::uint32_t> ids;
+  std::vector<geometry_msgs::msg::Pose> poses;
+  if (!data_wrapper_->request_corrected_poses(
+      ids, poses, g_backend_service_timeout))
+  {
+    LOG(WARNING) << YELLOW
+                 << " ---> Loop backend unavailable; saving odometry map."
+                 << RESET;
+    return false;
+  }
+
+  std::unordered_map<std::uint32_t, Eigen::Matrix4f> transforms;
+  transforms.reserve(ids.size());
+  for (std::size_t i = 0; i < ids.size(); ++i) {
+    const auto & pose = poses[i];
+    Eigen::Quaternionf q(
+      static_cast<float>(pose.orientation.w),
+      static_cast<float>(pose.orientation.x),
+      static_cast<float>(pose.orientation.y),
+      static_cast<float>(pose.orientation.z));
+    if (!std::isfinite(q.norm()) || q.norm() < 1e-6f) {
+      return false;
+    }
+    q.normalize();
+    Eigen::Matrix4f transform = Eigen::Matrix4f::Identity();
+    transform.block<3, 3>(0, 0) = q.toRotationMatrix();
+    transform(0, 3) = static_cast<float>(pose.position.x);
+    transform(1, 3) = static_cast<float>(pose.position.y);
+    transform(2, 3) = static_cast<float>(pose.position.z);
+    transforms.emplace(ids[i], transform);
+  }
+
+  const auto & keyframes = keyframe_manager_->keyframes();
+  if (transforms.size() != keyframes.size()) {
+    LOG(WARNING) << YELLOW
+                 << " ---> Backend pose count does not match local keyframes; "
+                    "saving odometry map."
+                 << RESET;
+    return false;
+  }
+
+  PointCloudType::Ptr corrected_map(new PointCloudType());
+  for (const auto & keyframe : keyframes) {
+    const auto transform = transforms.find(keyframe.id);
+    if (transform == transforms.end()) {
+      return false;
+    }
+    PointCloudType world_cloud;
+    pcl::transformPointCloud(
+      *keyframe.cloud, world_cloud, transform->second);
+    *corrected_map += world_cloud;
+  }
+
+  PointCloudType output;
+  if (g_if_filter) {
+    pcl::VoxelGrid<PointType> voxel_filter;
+    voxel_filter.setLeafSize(
+      g_map_ds_size, g_map_ds_size, g_map_ds_size);
+    voxel_filter.setInputCloud(corrected_map);
+    voxel_filter.filter(output);
+  } else {
+    output = *corrected_map;
+  }
+  if (output.empty()) {
+    return false;
+  }
+  output.width = output.size();
+  output.height = 1;
+  output.is_dense = false;
+
+  std::error_code directory_error;
+  std::filesystem::create_directories(g_save_map_dir, directory_error);
+  if (directory_error) {
+    LOG(ERROR) << RED << " ---> Failed to create map directory: "
+               << directory_error.message() << RESET;
+    return false;
+  }
+  const std::string map_name = g_save_map_dir + "/" + g_map_name;
+  if (pcl::io::savePCDFileBinary(map_name, output) != 0) {
+    LOG(ERROR) << RED << " ---> Failed to save corrected map: "
+               << map_name << RESET;
+    return false;
+  }
+  LOG(INFO) << GREEN << " ---> Corrected map saved to: "
+            << map_name << " (" << output.size() << " points)" << RESET;
+  return true;
 }
 
 
