@@ -8,3 +8,4 @@ install
 .catkin_tools
 src/CMakeLists.txt
 *map*
+!src/super_lio_loop_backend/include/super_lio_loop_backend/upstream/voxel_map.hpp

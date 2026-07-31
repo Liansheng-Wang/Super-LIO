@@ -1,0 +1,233 @@
+name: Release Super-LIO Humble DEB
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      build_jobs:
+        description: Parallel build jobs
+        required: false
+        default: "4"
+        type: string
+      swap_size_gb:
+        description: Swap size in GB
+        required: false
+        default: "16"
+        type: string
+      release_tag:
+        description: Release tag, for example v2.1.0
+        required: true
+        type: string
+
+concurrency:
+  group: super-lio-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  setup:
+    name: determine-release-version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Determine release tag and Debian version
+        id: release
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -eu
+          RAW_TAG=""
+          if [ -n "${INPUT_RELEASE_TAG}" ]; then
+              RAW_TAG="${INPUT_RELEASE_TAG}"
+              SOURCE="workflow_dispatch input"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+              RAW_TAG="${{ github.ref_name }}"
+              SOURCE="git tag"
+          fi
+
+          if [ -z "${RAW_TAG}" ]; then
+              echo "::error::A v* Git tag or manual release_tag is required"
+              exit 1
+          fi
+
+          TAG="${RAW_TAG}"
+          VERSION="${RAW_TAG#v}"
+          VERSION="$(echo "${VERSION}" | tr ':_' '..')"
+          if ! echo "${VERSION}" | grep -qE '^[0-9][0-9A-Za-z.+:~_-]*$'; then
+              echo "::error::Tag '${RAW_TAG}' does not produce a valid Debian version"
+              exit 1
+          fi
+
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "::notice::Release tag=${TAG}, Debian version=${VERSION}, source=${SOURCE}"
+
+  build:
+    needs: setup
+    name: build-humble-jammy-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-24.04
+
+    env:
+      ROS_DISTRO: humble
+      UBUNTU_CODENAME: jammy
+      BUILD_JOBS: ${{ inputs.build_jobs || '4' }}
+      PACKAGE_VERSION: ${{ needs.setup.outputs.version }}
+      REQUESTED_SWAP_GB: ${{ inputs.swap_size_gb || '16' }}
+      LIVOX_DEB_TAG: "1.2.6.1"
+      LIVOX_DEB_VERSION: auto
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate build inputs
+        run: |
+          set -eu
+          if ! echo "${BUILD_JOBS}" | grep -qE '^[1-9][0-9]*$'; then
+              echo "::error::build_jobs must be a positive integer"
+              exit 1
+          fi
+          if ! echo "${REQUESTED_SWAP_GB}" | grep -qE '^[0-9]+$'; then
+              echo "::error::swap_size_gb must be an integer"
+              exit 1
+          fi
+          if ! echo "${PACKAGE_VERSION}" | grep -qE '^[0-9][0-9A-Za-z.+:~_-]*$'; then
+              echo "::error::Invalid Debian version '${PACKAGE_VERSION}'"
+              exit 1
+          fi
+
+      - name: Free up disk space
+        run: |
+          set -eu
+          df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost \
+                      "$AGENT_TOOLSDIRECTORY" /usr/local/lib/android \
+                      /usr/share/swift /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af || true
+          df -h /
+
+      - name: Set up swap space
+        run: |
+          set -eu
+          FREE_GB="$(df -BG --output=avail / | tail -1 | tr -dc '0-9')"
+          MAX_SWAP_GB=$((FREE_GB - 3))
+          SWAP_SIZE_GB="${REQUESTED_SWAP_GB}"
+          if [ "${MAX_SWAP_GB}" -le 0 ] || [ "${SWAP_SIZE_GB}" -eq 0 ]; then
+              echo "Skip swap (requested=${SWAP_SIZE_GB}GB, free=${FREE_GB}GB)"
+              exit 0
+          fi
+          if [ "${SWAP_SIZE_GB}" -gt "${MAX_SWAP_GB}" ]; then
+              SWAP_SIZE_GB="${MAX_SWAP_GB}"
+          fi
+          sudo swapoff -a
+          sudo rm -f /swapfile /mnt/swapfile
+          sudo fallocate -l "${SWAP_SIZE_GB}G" /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+          driver-opts: network=host
+
+      - name: Build, test, and package DEB
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/ci.Dockerfile
+          platforms: ${{ matrix.platform }}
+          target: export
+          build-args: |
+            ROS_DISTRO=${{ env.ROS_DISTRO }}
+            BUILD_JOBS=${{ env.BUILD_JOBS }}
+            PACKAGE_VERSION=${{ env.PACKAGE_VERSION }}
+            LIVOX_DEB_TAG=${{ env.LIVOX_DEB_TAG }}
+            LIVOX_DEB_VERSION=${{ env.LIVOX_DEB_VERSION }}
+          cache-from: type=gha,scope=super-lio-humble-jammy-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=super-lio-humble-jammy-${{ matrix.arch }}
+          outputs: type=local,dest=./deb_output
+
+      - name: Inspect generated DEB
+        run: |
+          set -eu
+          DEB="$(find deb_output -maxdepth 1 -name '*.deb' -print -quit)"
+          if [ -z "${DEB}" ]; then
+              echo "::error::No .deb package was generated"
+              exit 1
+          fi
+          dpkg-deb -I "${DEB}"
+          test "$(dpkg-deb -f "${DEB}" Version)" = "${PACKAGE_VERSION}-0jammy"
+          test "$(dpkg-deb -f "${DEB}" Architecture)" = "${{ matrix.arch }}"
+          ls -lh "${DEB}"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: super-lio-humble-${{ matrix.arch }}-deb
+          path: deb_output/*.deb
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs:
+      - setup
+      - build
+    name: publish-github-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download packaged DEBs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: super-lio-humble-*-deb
+          path: release-assets
+          merge-multiple: true
+
+      - name: Inspect release assets
+        run: |
+          set -eu
+          test "$(find release-assets -maxdepth 1 -name '*.deb' | wc -l)" -eq 2
+          for DEB in release-assets/*.deb; do
+              dpkg-deb -I "${DEB}"
+          done
+          ls -lh release-assets/*.deb
+
+      - name: Upload DEB to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.setup.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: "Super-LIO DEB ${{ needs.setup.outputs.tag }}"
+          body: |
+            Super-LIO ROS 2 Humble packages for Ubuntu 22.04 Jammy.
+
+            - Source commit: `${{ github.sha }}`
+            - Debian version: `${{ needs.setup.outputs.version }}-0jammy`
+            - Packages included: `basic`, `super_lio_loop_msgs`,
+              `super_lio_loop_backend`, and `super_lio`
+            - Architectures: ARM64 and amd64
+
+            Install `ros-humble-livox-ros-driver2` first, then install the
+            matching Super-LIO package with `sudo apt install ./<package>.deb`.
+          files: release-assets/*.deb
+          draft: false
+          prerelease: false
+          make_latest: true
