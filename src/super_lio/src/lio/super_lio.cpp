@@ -109,7 +109,51 @@ void SuperLIO::stateWaitMapInit()
   }
 }
 
+void SuperLIO::Reset(){
+  ivox_.reset(new OctVoxMapType(OctVoxMapType::Options{g_ivox_resolution, g_ivox_capacity}));
+  kf_.reset(new ESKF());
+  data_wrapper_->setESKF(kf_);
+  data_wrapper_->clear();
+
+  scan_undistort_full_->clear();
+  ds_undistort_->clear();
+  world_pc_->clear();
+  ds_world_->clear();
+  if(point_map_){
+    point_map_->clear();
+  }
+  if (g_enable_keyframe_pub || g_enable_backend) {
+    keyframe_manager_ = std::make_unique<KeyframeManager>(
+      g_loop_kf_trans_thresh, g_loop_kf_rot_thresh);
+  }
+
+  init_imu_count_ = 0;
+  init_mean_gyro_ = V3::Zero();
+  init_mean_acce_ = V3::Zero();
+  frame_num_ = 0;
+  flg_init_ = false;
+  flg_first_scan_ = true;
+  g_flg_map_init = true;
+  effect_knn_num_ = 0;
+  pcd_index_ = -1;
+  state_fn_ = &SuperLIO::stateWaitKFInit;
+
+  LOG(INFO) << GREEN << " ---> [SuperLIO]: reset; waiting for KF init." << RESET;
+}
+
+
 void SuperLIO::process(){
+  // Standby: no sensor subscriptions, nothing to do. The next activation edge
+  // wipes the state so the new session starts from a clean map and filter.
+  if(!data_wrapper_->is_active()){
+    was_active_ = false;
+    return;
+  }
+  if(!was_active_){
+    was_active_ = true;
+    Reset();
+  }
+
   if(!data_wrapper_->sync_measure(measures_)){
     return;
   }
@@ -118,9 +162,9 @@ void SuperLIO::process(){
 
 
 bool SuperLIO::kf_init(){
-  static int imu_cout = 0;
-  static V3 mean_gyro = V3::Zero();
-  static V3 mean_acce = V3::Zero();
+  int& imu_cout = init_imu_count_;
+  V3& mean_gyro = init_mean_gyro_;
+  V3& mean_acce = init_mean_acce_;
 
   for(auto& imu: measures_.imu){
     imu_cout ++;
@@ -131,6 +175,17 @@ bool SuperLIO::kf_init(){
   /// 100 Hz for 1 second.
   if(imu_cout < 50){
     return false;
+  }
+
+  // The mean accelerometer vector is taken as gravity and the mean gyro as the
+  // gyro bias, so both are only valid if the platform is essentially still for
+  // this window. Moving during init bakes the motion into the attitude and the
+  // bias, which then leaks into every pose of the session.
+  if(mean_gyro.norm() > 0.05){
+    LOG(WARNING) << YELLOW << " ---> [SuperLIO]: init while rotating (mean gyro "
+                 << mean_gyro.norm() << " rad/s); gravity alignment and gyro bias "
+                 << "will be off. Keep the platform still when starting."
+                 << RESET;
   }
 
   V3 gravity = - mean_acce * g_gravity_norm / mean_acce.norm();
@@ -678,7 +733,13 @@ void SuperLIO::UpdateMap() {
 
 void SuperLIO::Output(){
   auto state = kf_->GetNavState();
-  data_wrapper_->pub_odom(state);  
+  data_wrapper_->pub_odom(state);
+
+  // Ahead of the g_visual_map block on purpose: that block decimates by
+  // g_pub_step and returns early, and downstream modeling needs every scan.
+  if(g_pub_body_cloud){
+    data_wrapper_->pub_cloud_body_odom(scan_undistort_full_, state);
+  }
 
   Eigen::Matrix4f transformation = Eigen::Matrix4f::Identity();
   transformation.block<3, 3>(0, 0) = state.R.R_.cast<float>();

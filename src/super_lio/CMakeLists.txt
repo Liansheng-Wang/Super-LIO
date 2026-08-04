@@ -17,6 +17,7 @@ find_package(rosidl_default_generators REQUIRED)
 
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
@@ -61,6 +62,7 @@ target_link_libraries(lio PUBLIC
   ${PCL_LIBRARIES}
   rclcpp::rclcpp
   ${std_msgs_TARGETS}
+  ${std_srvs_TARGETS}
   ${geometry_msgs_TARGETS}
   ${sensor_msgs_TARGETS}
   ${visualization_msgs_TARGETS}

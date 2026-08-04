@@ -38,6 +38,11 @@ public:
   void saveMap();
   void printTimeRecord();
 
+  /// Return to the pre-init state: empty map, fresh filter, cleared buffers.
+  /// Used when the node is re-activated so a new session estimates gravity and
+  /// bias from scratch instead of inheriting the previous session's.
+  void Reset();
+
 protected:
   void stateWaitKFInit();
   void stateWaitMapInit();
@@ -66,6 +71,13 @@ protected:
   
   bool flg_init_ = false;
   bool flg_first_scan_ = true;
+  /// Tracks the activation edge so process() can reset once on start.
+  bool was_active_ = false;
+  /// kf_init accumulators. Members, not function-local statics: they must reset
+  /// with the rest of the state when a new session starts.
+  int init_imu_count_ = 0;
+  BASIC::V3 init_mean_gyro_ = BASIC::V3::Zero();
+  BASIC::V3 init_mean_acce_ = BASIC::V3::Zero();
   std::vector<DynamicState> propagate_states_;
   BASIC::CloudPtr scan_undistort_full_;
   BASIC::CloudPtr ds_undistort_;

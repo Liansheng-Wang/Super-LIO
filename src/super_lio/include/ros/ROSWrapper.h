@@ -5,6 +5,7 @@
 #include <map>
 #include <tuple>
 #include <deque>
+#include <atomic>
 #include <vector>
 #include <execution>
 
@@ -17,6 +18,7 @@
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
 #include <sensor_msgs/msg/imu.hpp>
+#include <std_srvs/srv/set_bool.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
@@ -65,7 +67,13 @@ public:
     lidar_pushed_ = false;
     last_timestamp_imu_ = -1.0;
     last_timestamp_lidar_ = -1.0;
+    path_.poses.clear();
+    last_path_point_ = BASIC::V3(0, 0, -100);
   }
+
+  /// False while the node is on standby: sensor subscriptions are torn down, so
+  /// nothing is deserialised and nothing is processed.
+  bool is_active() const { return active_.load(std::memory_order_acquire); }
 
   void pub_odom(const NavState&);
   void pub_cloud_world(const BASIC::CloudPtr& pc, double time);
@@ -75,7 +83,13 @@ public:
   void pub_cloud_body_pose(const BASIC::CloudPtr& pc, 
                            const NavState& state);
   void pub_cloud_body_pose( const BASIC::VV3& pc_body,
-                            const NavState& state);  
+                            const NavState& state);
+  /// Undistorted scan expressed in the LiDAR frame at scan-end, plus the
+  /// matching world<-lidar pose on an identical stamp. Downstream nodes that
+  /// need motion-compensated points in the robot's own TF tree (target
+  /// modeling, ROI cropping) consume this pair instead of the raw scan.
+  void pub_cloud_body_odom(const BASIC::CloudPtr& body_imu_cloud,
+                           const NavState& state);
   void pub_processing_time(double time, double current_time, double mean_time, double std_time);
   void pub_keyframe(
     std::uint32_t id, const NavState & state, const BASIC::CloudPtr & body_cloud);
@@ -99,6 +113,9 @@ private:
 
   void setupParams();
   void setupIO();
+  void createSensorSubscriptions();
+  void destroySensorSubscriptions();
+  void setActive(bool active);
 
 private:
   rclcpp::CallbackGroup::SharedPtr cb_sensor_;
@@ -121,6 +138,13 @@ private:
 
   BASIC::V3 last_path_point_ = BASIC::V3(0, 0, -100);
 
+  /// frame_id of the most recent incoming scan; re-used as the frame_id of the
+  /// undistorted body cloud so it lands in the robot's existing TF tree.
+  std::string lidar_frame_id_ = "lidar";
+
+  std::atomic<bool> active_{true};
+  rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr set_active_srv_;
+
 /// output.
 private:
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_odom_;       /// lidar fre --> IMU frame
@@ -128,6 +152,8 @@ private:
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_robo_odom_;  /// IMU fre   --> Robot frame
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub_path_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_world_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub_cloud_body_;
+  rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pub_body_odom_;
   rclcpp::Publisher<super_lio_loop_msgs::msg::Keyframe>::SharedPtr
     pub_keyframe_;
   rclcpp::Client<super_lio_loop_msgs::srv::GetCorrectedPoses>::SharedPtr

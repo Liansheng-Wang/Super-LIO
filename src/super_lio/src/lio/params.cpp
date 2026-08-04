@@ -74,6 +74,11 @@ namespace LI2Sup{
   bool g_visual_dense = false;
   int  g_pub_step;
 
+  bool g_start_active = true;
+  bool g_pub_body_cloud = false;
+  std::string g_body_cloud_topic = "/lio/cloud_body";
+  std::string g_body_odom_topic  = "/lio/odom_body";
+
   /// for planner
   bool g_planner_enable;
 

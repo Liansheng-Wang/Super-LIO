@@ -200,6 +200,22 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<int>("lio.output.pub_step", 0);
   node.get_parameter("lio.output.pub_step", g_pub_step);
 
+  node.declare_parameter<bool>("lio.output.body_cloud", false);
+  node.get_parameter("lio.output.body_cloud", g_pub_body_cloud);
+
+  // false: come up on standby and wait for ~/set_active. Each activation starts
+  // a fresh session (empty map, re-estimated gravity and bias).
+  node.declare_parameter<bool>("lio.control.start_active", true);
+  node.get_parameter("lio.control.start_active", g_start_active);
+
+  node.declare_parameter<std::string>(
+    "lio.ros.body_cloud_topic", "/lio/cloud_body");
+  node.get_parameter("lio.ros.body_cloud_topic", g_body_cloud_topic);
+
+  node.declare_parameter<std::string>(
+    "lio.ros.body_odom_topic", "/lio/odom_body");
+  node.get_parameter("lio.ros.body_odom_topic", g_body_odom_topic);
+
   // ================= relocation =================
   node.declare_parameter<bool>("lio.relocation.update_map", false);
   node.get_parameter("lio.relocation.update_map", g_update_map);
@@ -310,10 +326,10 @@ ROSWrapper::ROSWrapper(const rclcpp::NodeOptions& options)
 }
 
 
-void ROSWrapper::setupIO(){
-  //// input ======================================
-  cb_sensor_ = this->create_callback_group(
-      rclcpp::CallbackGroupType::MutuallyExclusive);
+void ROSWrapper::createSensorSubscriptions(){
+  if (sub_imu_) {
+    return;
+  }
 
   rclcpp::SubscriptionOptions sub_opt;
   sub_opt.callback_group = cb_sensor_;
@@ -347,6 +363,60 @@ void ROSWrapper::setupIO(){
             std::bind(&ROSWrapper::stdMsgHandler, this, std::placeholders::_1),
             sub_opt);
   }
+}
+
+
+void ROSWrapper::destroySensorSubscriptions(){
+  sub_imu_.reset();
+  sub_lidar_.reset();
+  sub_lidar_std_.reset();
+}
+
+
+void ROSWrapper::setActive(bool active){
+  if (active == is_active()) {
+    return;
+  }
+  if (active) {
+    // Buffers first: whatever is still queued predates this session. process()
+    // sees the edge on its next tick and wipes the map and filter too.
+    clear();
+    createSensorSubscriptions();
+    active_.store(true, std::memory_order_release);
+    LOG(INFO) << GREEN << " ---> [Control] active" << RESET;
+  } else {
+    active_.store(false, std::memory_order_release);
+    destroySensorSubscriptions();
+    clear();
+    LOG(INFO) << YELLOW << " ---> [Control] standby" << RESET;
+  }
+}
+
+
+void ROSWrapper::setupIO(){
+  //// input ======================================
+  cb_sensor_ = this->create_callback_group(
+      rclcpp::CallbackGroupType::MutuallyExclusive);
+
+  active_.store(g_start_active, std::memory_order_release);
+  if (g_start_active) {
+    createSensorSubscriptions();
+  } else {
+    LOG(INFO) << YELLOW << " ---> [Control] standby; call "
+              << std::string(this->get_name()) << "/set_active to start"
+              << RESET;
+  }
+
+  set_active_srv_ = this->create_service<std_srvs::srv::SetBool>(
+      "~/set_active",
+      [this](const std::shared_ptr<std_srvs::srv::SetBool::Request> req,
+             std::shared_ptr<std_srvs::srv::SetBool::Response> res) {
+        const bool was = is_active();
+        setActive(req->data);
+        res->success = true;
+        res->message = std::string(req->data ? "active" : "standby") +
+                       (was == req->data ? " (unchanged)" : "");
+      });
 
   /// output ======================================
   pub_odom_ = this->create_publisher<nav_msgs::msg::Odometry>(
@@ -364,6 +434,17 @@ void ROSWrapper::setupIO(){
   pub_cloud_world_ =
     this->create_publisher<sensor_msgs::msg::PointCloud2>(
         "/lio/cloud_world", 10);
+
+  if (g_pub_body_cloud) {
+    pub_cloud_body_ =
+      this->create_publisher<sensor_msgs::msg::PointCloud2>(
+          g_body_cloud_topic, rclcpp::QoS(10).reliable());
+    pub_body_odom_ =
+      this->create_publisher<nav_msgs::msg::Odometry>(
+          g_body_odom_topic, rclcpp::QoS(50).reliable());
+    LOG(INFO) << GREEN << " ---> [Output] undistorted body cloud: "
+              << g_body_cloud_topic << " + " << g_body_odom_topic << RESET;
+  }
 
   if (g_enable_keyframe_pub || g_enable_backend) {
     pub_keyframe_ =
@@ -455,6 +536,7 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
 
 void ROSWrapper::livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr msg){
   if(msg->point_num < 10) return;
+  if(!msg->header.frame_id.empty()) lidar_frame_id_ = msg->header.frame_id;
   LidarData lidar_data;
   std::size_t ptsize = msg->point_num;
   lidar_data.pc.reset(new pcl::PointCloud<LI2Sup::PointXTZIT>());
@@ -482,7 +564,8 @@ void ROSWrapper::livoxHandler(const livox_ros_driver2::msg::CustomMsg::SharedPtr
 */
 void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr msg){
   if(msg->data.size() < 10) return;
-  
+  if(!msg->header.frame_id.empty()) lidar_frame_id_ = msg->header.frame_id;
+
   LidarData lidar_data;
   lidar_data.pc.reset(new pcl::PointCloud<LI2Sup::PointXTZIT>());
 
@@ -554,6 +637,47 @@ void ROSWrapper::stdMsgHandler(const sensor_msgs::msg::PointCloud2::SharedPtr ms
       auto& pt = pl_orig.points[i];
       if (!validPoint(pt.x, pt.y, pt.z)) continue;
       offset_time = pt.t * 1e-9;
+      lidar_data.pc->emplace_back(
+          pt.x, pt.y, pt.z, pt.intensity, offset_time);
+    }
+    lidar_data.end_time = lidar_data.start_time + offset_time;
+    break;
+  }
+  case LID_TYPE::LIVOX_PC2:
+  {
+    // livox_ros_driver2 with xfer_format: 0 — the same stream as CustomMsg but
+    // as a PointCloud2. `timestamp` is float64; some driver builds emit it as an
+    // absolute epoch time, others as an offset from header.stamp, so detect
+    // which one it is instead of adding another knob. `tag` is kept for the same
+    // return-quality gate livoxHandler applies.
+    double timestamp_unit_scale;
+    switch (g_timestamp_unit) {
+      case 1: timestamp_unit_scale = 1e-3; break;  // milliseconds
+      case 2: timestamp_unit_scale = 1e-6; break;  // microseconds
+      case 3: timestamp_unit_scale = 1e-9; break;  // nanoseconds
+      default: timestamp_unit_scale = 1.0;  break;  // seconds
+    }
+
+    pcl::PointCloud<livox_pc2::Point> pl_orig;
+    pcl::fromROSMsg(*msg, pl_orig);
+    const std::size_t plsize = pl_orig.size();
+    if (plsize == 0) return;
+
+    lidar_data.pc->reserve(plsize / g_filter_rate + 1);
+    lidar_data.start_time = stampToSec(msg->header.stamp);
+
+    // Absolute epoch stamps are >> any plausible per-scan offset.
+    const double first_ts = pl_orig.points[0].timestamp * timestamp_unit_scale;
+    const bool absolute_time = first_ts > 1.0e8;
+    const double time_base = absolute_time ? first_ts : 0.0;
+    if (absolute_time) lidar_data.start_time = first_ts;
+
+    for (std::size_t i = 0; i < plsize; i += g_filter_rate) {
+      auto& pt = pl_orig.points[i];
+      const auto tag = pt.tag & 0x30;
+      if (tag != 0x10 && tag != 0x00) continue;
+      if (!validPoint(pt.x, pt.y, pt.z)) continue;
+      offset_time = pt.timestamp * timestamp_unit_scale - time_base;
       lidar_data.pc->emplace_back(
           pt.x, pt.y, pt.z, pt.intensity, offset_time);
     }
@@ -842,7 +966,72 @@ void ROSWrapper::pub_cloud_world_pose(const CloudPtr& pc,
 }
 
 
-void ROSWrapper::pub_processing_time(double time, 
+void ROSWrapper::pub_cloud_body_odom(const CloudPtr& body_imu_cloud,
+   const NavState& state)
+{
+  if (!pub_cloud_body_ || !pub_body_odom_ || !body_imu_cloud ||
+      body_imu_cloud->empty())
+  {
+    return;
+  }
+
+  // The undistorted scan comes out in the IMU frame at scan-end. Express it in
+  // the LiDAR frame instead so a consumer can reach base_link through the
+  // robot's existing static TF without duplicating the lidar<-imu extrinsic.
+  const M3 R_li = g_lidar_imu.R_;
+  const V3 t_li = g_lidar_imu.t_;
+  const M3 R_il = R_li.transpose();
+
+  PointCloudType lidar_cloud;
+  lidar_cloud.resize(body_imu_cloud->size());
+  for (std::size_t i = 0; i < body_imu_cloud->size(); ++i) {
+    const auto& src = body_imu_cloud->points[i];
+    const V3 p_lidar = R_il * (V3(src.x, src.y, src.z) - t_li);
+    auto& dst = lidar_cloud.points[i];
+    dst.x = p_lidar[0];
+    dst.y = p_lidar[1];
+    dst.z = p_lidar[2];
+    dst.intensity = src.intensity;
+  }
+  lidar_cloud.width = lidar_cloud.size();
+  lidar_cloud.height = 1;
+  lidar_cloud.is_dense = false;
+
+  const auto stamp = toRosTime(state.timestamp);
+
+  sensor_msgs::msg::PointCloud2 cloud_msg;
+  pcl::toROSMsg(lidar_cloud, cloud_msg);
+  cloud_msg.header.stamp = stamp;
+  cloud_msg.header.frame_id = lidar_frame_id_;
+  pub_cloud_body_->publish(cloud_msg);
+
+  // world <- lidar on the identical stamp, so the consumer can pair the two by
+  // timestamp without any TF interpolation.
+  const M3 R_wl = state.R.R_ * R_li;
+  const V3 t_wl = state.R.R_ * t_li + state.p;
+  const Quat q_wl = Quat(R_wl).normalized();
+
+  nav_msgs::msg::Odometry odom;
+  odom.header.stamp = stamp;
+  odom.header.frame_id = "world";
+  odom.child_frame_id = lidar_frame_id_;
+  odom.pose.pose.position.x = t_wl[0];
+  odom.pose.pose.position.y = t_wl[1];
+  odom.pose.pose.position.z = t_wl[2];
+  odom.pose.pose.orientation.x = q_wl.x();
+  odom.pose.pose.orientation.y = q_wl.y();
+  odom.pose.pose.orientation.z = q_wl.z();
+  odom.pose.pose.orientation.w = q_wl.w();
+  // World-frame IMU velocity, same convention as /lio/odom (not child-frame as
+  // nav_msgs/Odometry nominally specifies).
+  odom.twist.twist.linear.x = state.v[0];
+  odom.twist.twist.linear.y = state.v[1];
+  odom.twist.twist.linear.z = state.v[2];
+  pub_body_odom_->publish(odom);
+}
+
+
+void ROSWrapper::pub_processing_time(double time,
   double current_time, double mean_time, double std_time)
 {
   static auto pub_processing_time_ =

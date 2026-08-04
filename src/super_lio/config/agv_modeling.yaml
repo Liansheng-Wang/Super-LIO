@@ -1,0 +1,85 @@
+## Super-LIO tuned as the odometry + motion-compensation front end for
+## agv_target_modeling_lite.
+##
+## Differences from livox_360.yaml, all driven by the modeling use case:
+##   - lidar_type 9 (LIVOX_PC2): the AGV publishes sensor_msgs/PointCloud2 from
+##     livox_ros_driver2 (xfer_format 0), not CustomMsg.
+##   - blind 0.4 instead of 2.0: the target vehicle sits 0.8-2.8 m to the side,
+##     so a 2 m blind radius would eat its near face.
+##   - filter_rate 1 instead of 3: modeling wants full point density; the scan
+##     published on body_cloud_topic is what gets accumulated.
+##   - output.body_cloud true: publishes the undistorted scan (LiDAR frame,
+##     scan-end) plus the matching world<-lidar pose on an identical stamp.
+/**:
+  ros__parameters:
+    lio.map.save_map: false
+    lio.map.if_filter: true
+    lio.map.save_map_dir: "map"
+    lio.map.map_name: "map.pcd"
+    lio.map.ds_size: 0.25
+    lio.map.save_interval: -1
+
+    lio.loop.enable_keyframe_pub: false
+    lio.loop.kf_trans_thresh: 1.0
+    lio.loop.kf_rot_thresh: 15.0
+    lio.loop.keyframe_topic: "/super_lio/keyframe"
+    lio.loop.enable_backend: false
+    lio.loop.backend_service_timeout: 5.0
+
+    lio.ros.lidar_topic: "/livox/pointcloud"
+    lio.ros.imu_topic: "/livox/imu"
+    lio.ros.body_cloud_topic: "/lio/cloud_body"
+    lio.ros.body_odom_topic: "/lio/odom_body"
+
+    # 9 = LIVOX_PC2 (livox_ros_driver2 PointCloud2: x y z intensity tag line timestamp)
+    lio.sensor.lidar_type: 9
+    # 0=sec, 1=ms, 2=us, 3=ns — the driver emits float64 seconds.
+    lio.sensor.timestamp_unit: 0
+    lio.sensor.blind: 0.4
+    lio.sensor.maxrange: 60.0
+    lio.sensor.filter_rate: 1
+    lio.sensor.enable_downsample: true
+    lio.sensor.voxel_fliter_size: 0.5
+    lio.sensor.gravity_norm: 9.7946
+    lio.sensor.imu_type: 1
+    lio.sensor.imu_na: 0.1
+    lio.sensor.imu_ng: 0.1
+    lio.sensor.imu_nba: 0.0001
+    lio.sensor.imu_nbg: 0.0001
+
+    # Mid360 factory lidar->imu extrinsic. Must match the physical rig; this is
+    # the only place the extrinsic lives — the modeling node reaches base_link
+    # through the robot's own static TF on the LiDAR frame.
+    lio.extrinsic.lidar_imu: [-0.011, -0.02329, 0.04412,
+                              1.0, 0.0, 0.0,
+                              0.0, 1.0, 0.0,
+                              0.0, 0.0, 1.0]
+    lio.extrinsic.odom_robo: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+    lio.hash_map.hash_capacity: 2000000
+    lio.hash_map.vox_resolution: 0.5
+
+    lio.kf.kf_type: 0
+    lio.kf.kf_max_iterations: 4
+    lio.kf.kf_align_gravity: true
+    lio.kf.kf_quit_eps: 0.001
+
+    lio.output.robot: false
+    lio.output.plan_env_world: false
+    lio.output.plan_env_body: false
+    lio.output.ml_map: false
+    lio.output.planner: false
+    lio.output.body_cloud: true
+
+    # Come up on standby: no sensor subscriptions, no processing, until the
+    # modeling node calls ~/set_active on its start service. Each activation is
+    # a fresh session — empty map, gravity and gyro bias re-estimated — so the
+    # platform must be still for ~0.5 s after start.
+    lio.control.start_active: false
+    # World-frame viz cloud: keep it off on the robot, turn it on when debugging
+    # in RViz. It does not affect body_cloud.
+    lio.output.map: false
+    lio.output.dense: true
+    lio.output.pub_step: 1
+
+    lio.eva.timer: false

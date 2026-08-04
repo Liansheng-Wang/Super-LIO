@@ -92,6 +92,14 @@ namespace LI2Sup{
   extern bool g_visual_dense;
   extern int  g_pub_step;
 
+  /// undistorted body-frame scan + matching pose, for downstream consumers that
+  /// need motion-compensated points in the sensor frame (e.g. target modeling).
+  /// come up processing immediately, vs. on standby awaiting ~/set_active
+  extern bool g_start_active;
+  extern bool g_pub_body_cloud;
+  extern std::string g_body_cloud_topic;
+  extern std::string g_body_odom_topic;
+
   /// for planner
   extern bool g_planner_enable;
 

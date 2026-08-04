@@ -155,7 +155,28 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(robosenseM1_ros::Point,
                                   (double, timestamp, timestamp)
                                   )
 
+// livox_ros_driver2 PointCloud2 output (xfer_format: 0 / "pcl" format):
 // x, y, z, intensity, tag, line, timestamp
+namespace livox_pc2 {
+struct EIGEN_ALIGN16 Point {
+    PCL_ADD_POINT4D;
+    float intensity;
+    std::uint8_t tag;
+    std::uint8_t line;
+    double timestamp;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+};
+}
+
+POINT_CLOUD_REGISTER_POINT_STRUCT(livox_pc2::Point,
+                                  (float, x, x)
+                                  (float, y, y)
+                                  (float, z, z)
+                                  (float, intensity, intensity)
+                                  (std::uint8_t, tag, tag)
+                                  (std::uint8_t, line, line)
+                                  (double, timestamp, timestamp)
+                                  )
 
 namespace BASIC {
 
