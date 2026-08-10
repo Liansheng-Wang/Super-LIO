@@ -7,11 +7,13 @@
     lio.map.ds_size: 0.25
     lio.map.save_interval: 500
 
-    lio.loop.enable_keyframe_pub: false
+    lio.loop.enable_keyframe_pub: true
     lio.loop.kf_trans_thresh: 1.0
     lio.loop.kf_rot_thresh: 15.0
+    lio.loop.submap_scan_num: 10
+    lio.loop.submap_voxel_size: 0.2
     lio.loop.keyframe_topic: "/super_lio/keyframe"
-    lio.loop.enable_backend: false
+    lio.loop.enable_backend: true
     lio.loop.backend_service_timeout: 5.0
 
     lio.ros.lidar_topic: "/rslidar_points"

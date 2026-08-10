@@ -43,6 +43,13 @@ void LoadParamFromRos(rclcpp::Node& node)
   node.declare_parameter<double>("lio.loop.kf_rot_thresh", 15.0);
   node.get_parameter("lio.loop.kf_rot_thresh", g_loop_kf_rot_thresh);
 
+  node.declare_parameter<int>("lio.loop.submap_scan_num", 10);
+  node.get_parameter("lio.loop.submap_scan_num", g_loop_submap_scan_num);
+
+  node.declare_parameter<double>("lio.loop.submap_voxel_size", 0.2);
+  node.get_parameter(
+    "lio.loop.submap_voxel_size", g_loop_submap_voxel_size);
+
   node.declare_parameter<std::string>(
     "lio.loop.keyframe_topic", "/super_lio/keyframe");
   node.get_parameter("lio.loop.keyframe_topic", g_loop_keyframe_topic);
@@ -472,12 +479,14 @@ void ROSWrapper::imuHandler(const sensor_msgs::msg::Imu::SharedPtr msg){
                  msg->angular_velocity.y,
                  msg->angular_velocity.z);
 
-  if (data.secs < last_timestamp_imu_) {
-    LOG(WARNING) << "imu loop back, clear buffer";
-    imu_buffer_.clear();
-    imu_buffer_.push_back(data);
-    last_timestamp_imu_ = data.secs;
-    // eskf_->Reset();   // todo:
+  // The filter has already propagated to last_timestamp_imu_.  Rewinding that
+  // watermark for a late DDS/bag sample makes subsequently interleaved samples
+  // repeatedly clear the integration buffer and corrupts the ESKF state.
+  // Preserve the monotonic filter timeline and discard samples that can no
+  // longer be integrated safely.
+  if (data.secs <= last_timestamp_imu_) {
+    LOG(WARNING) << "drop out-of-order imu sample: stamp=" << data.secs
+                 << ", watermark=" << last_timestamp_imu_;
     return;
   }
 

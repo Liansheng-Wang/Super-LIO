@@ -78,7 +78,13 @@ void SuperLIO::init(){
   }
   if (g_enable_keyframe_pub || g_enable_backend) {
     keyframe_manager_ = std::make_unique<KeyframeManager>(
-      g_loop_kf_trans_thresh, g_loop_kf_rot_thresh);
+      g_loop_kf_trans_thresh, g_loop_kf_rot_thresh,
+      static_cast<std::size_t>(std::max(1, g_loop_submap_scan_num)),
+      g_loop_submap_voxel_size,
+      [wrapper = data_wrapper_](const LoopKeyframe & keyframe) {
+        wrapper->pub_keyframe(
+          keyframe.id, keyframe.state, keyframe.cloud);
+      });
   }
   
   points_world_v3_.reserve(21000);
@@ -124,7 +130,13 @@ void SuperLIO::Reset(){
   }
   if (g_enable_keyframe_pub || g_enable_backend) {
     keyframe_manager_ = std::make_unique<KeyframeManager>(
-      g_loop_kf_trans_thresh, g_loop_kf_rot_thresh);
+      g_loop_kf_trans_thresh, g_loop_kf_rot_thresh,
+      static_cast<std::size_t>(std::max(1, g_loop_submap_scan_num)),
+      g_loop_submap_voxel_size,
+      [wrapper = data_wrapper_](const LoopKeyframe & keyframe) {
+        wrapper->pub_keyframe(
+          keyframe.id, keyframe.state, keyframe.cloud);
+      });
   }
 
   init_imu_count_ = 0;
@@ -275,13 +287,7 @@ void SuperLIO::processLoopKeyframe()
   if (!keyframe_manager_) {
     return;
   }
-  const auto keyframe =
-    keyframe_manager_->consider(kf_->GetNavState(), ds_undistort_);
-  if (!keyframe) {
-    return;
-  }
-  data_wrapper_->pub_keyframe(
-    keyframe->id, keyframe->state, keyframe->cloud);
+  keyframe_manager_->consider(kf_->GetNavState(), ds_undistort_);
 }
 
 
@@ -388,6 +394,9 @@ void SuperLIO::ProcessCaceMap(){
 
 void SuperLIO::saveMap(){
   if(!g_save_map) return;
+  if (keyframe_manager_) {
+    keyframe_manager_->stop();
+  }
   if (g_enable_backend && saveCorrectedKeyframeMap()) {
     return;
   }
@@ -431,7 +440,11 @@ void SuperLIO::saveMap(){
 
 bool SuperLIO::saveCorrectedKeyframeMap()
 {
-  if (!keyframe_manager_ || keyframe_manager_->keyframes().empty()) {
+  if (!keyframe_manager_) {
+    return false;
+  }
+  const auto keyframes = keyframe_manager_->keyframes();
+  if (keyframes.empty()) {
     return false;
   }
 
@@ -467,7 +480,6 @@ bool SuperLIO::saveCorrectedKeyframeMap()
     transforms.emplace(ids[i], transform);
   }
 
-  const auto & keyframes = keyframe_manager_->keyframes();
   if (transforms.size() != keyframes.size()) {
     LOG(WARNING) << YELLOW
                  << " ---> Backend pose count does not match local keyframes; "

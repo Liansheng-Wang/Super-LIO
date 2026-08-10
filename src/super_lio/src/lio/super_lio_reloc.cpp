@@ -86,12 +86,22 @@ void SuperLIOReLoc::init(){
   LOG(INFO) << GREEN << " ---> [SuperLIO]: initialized." << RESET;
 
   auto start_time = std::chrono::high_resolution_clock::now();
-  SuperLIOReLoc::map_init();
+  const bool map_loaded = SuperLIOReLoc::map_init();
   auto end_time = std::chrono::high_resolution_clock::now();
   auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-  LOG(INFO) << GREEN << " ---> [SuperLIO]: Map init success. Time: " << duration.count() << " ms." << RESET;
+  if (!map_loaded) {
+    LOG(ERROR) << RED << " ---> [SuperLIO]: Map init failed." << RESET;
+    g_flag_run = false;
+    return;
+  }
+  LOG(INFO) << GREEN << " ---> [SuperLIO]: Map init success. Time: "
+            << duration.count() << " ms." << RESET;
 
   state_fn_ = &SuperLIOReLoc::stateWaitKFInit;
+  // The localization map is already loaded into ivox_.  Mark the initial
+  // activation as consumed so SuperLIO::process() does not immediately call
+  // Reset() and erase the map on its first timer tick.
+  was_active_ = data_wrapper_->is_active();
 }
 
 

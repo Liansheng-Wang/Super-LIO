@@ -42,6 +42,8 @@ namespace LI2Sup{
   extern bool g_enable_keyframe_pub;
   extern double g_loop_kf_trans_thresh;
   extern double g_loop_kf_rot_thresh;
+  extern int g_loop_submap_scan_num;
+  extern double g_loop_submap_voxel_size;
   extern std::string g_loop_keyframe_topic;
   extern bool g_enable_backend;
   extern double g_backend_service_timeout;

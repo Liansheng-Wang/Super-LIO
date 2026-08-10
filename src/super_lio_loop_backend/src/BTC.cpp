@@ -280,6 +280,10 @@ void STDescManager::get_project_plane(
       origin_list.push_back(iter->second->plane_ptr_);
     }
   }
+  if (origin_list.empty()) {
+    project_plane_list.clear();
+    return;
+  }
   for (size_t i = 0; i < origin_list.size(); i++)
     origin_list[i]->id_ = 0;
   int current_id = 1;
@@ -392,7 +396,7 @@ void STDescManager::get_project_plane(
 
 void STDescManager::merge_plane(std::vector<BTCPlane *> &origin_list,
                                 std::vector<BTCPlane *> &merge_plane_list) {
-  if (origin_list.size() == 1) {
+  if (origin_list.size() <= 1) {
     merge_plane_list = origin_list;
     return;
   }

@@ -1,8 +1,14 @@
 #include "lio/ESKF.h"
 
+#include <glog/logging.h>
+
 using namespace BASIC;
 
 namespace LI2Sup{
+
+namespace {
+constexpr double kMaxImuPropagationDt = 0.2;
+}
 
 
 /// [1] SEfB: P195：（7.37a） P203: (7.76a) (7.77a)  P220: Table 7-2 
@@ -147,7 +153,23 @@ bool ESKF::Predict(const IMUData& imu, DynamicState& state_imu, DynamicState& st
 
   double dt = imu.secs - forward_time_;
 
-  if(dt < 0 || dt > 0.2){
+  if (!std::isfinite(dt) || dt < 0) {
+    return false;
+  }
+  if (dt > kMaxImuPropagationDt) {
+    // A rosbag/session boundary can leave a large hole in the IMU stream.
+    // There are no measurements with which to integrate that interval, so
+    // keep the last corrected state and restart prediction at the new time.
+    fw_R_ = R_;
+    fw_p_ = p_;
+    fw_v_ = v_;
+    forward_time_ = imu.secs;
+    forward_last_imu_ = imu;
+    state_imu = DynamicState(imu.secs, fw_R_.R_, fw_p_, fw_v_,
+                             body_omega_, global_acc_);
+    state_robot = state_imu;
+    LOG(WARNING) << " ---> [ESKF]: forward IMU gap " << dt
+                 << " s; prediction time rebased without integration.";
     return false;
   }
 
@@ -208,6 +230,23 @@ bool ESKF::Predict(const IMUData& imu) {
     current_time_ = current_obs_time_;
   }else{
     dt = imu.secs - last_imu_time_;
+  }
+
+  if (!std::isfinite(dt) || dt < 0) {
+    last_imu_time_ = imu.secs;
+    last_imu_ = imu;
+    return false;
+  }
+  if (dt > kMaxImuPropagationDt) {
+    // Never integrate across missing IMU data.  In particular, consecutive
+    // bag files commonly have a several-second timestamp gap; integrating
+    // gravity/acceleration over that hole makes the nominal state diverge.
+    LOG(WARNING) << " ---> [ESKF]: IMU gap " << dt
+                 << " s; state held and propagation time rebased.";
+    current_time_ = std::min(imu.secs, current_obs_time_);
+    last_imu_time_ = imu.secs;
+    last_imu_ = imu;
+    return false;
   }
 
   V3 acc = 0.5 * (imu.acc + last_imu_.acc);

@@ -24,6 +24,8 @@ namespace LI2Sup{
   bool g_enable_keyframe_pub = false;
   double g_loop_kf_trans_thresh = 1.0;
   double g_loop_kf_rot_thresh = 15.0;
+  int g_loop_submap_scan_num = 10;
+  double g_loop_submap_voxel_size = 0.2;
   string g_loop_keyframe_topic = "/super_lio/keyframe";
   bool g_enable_backend = false;
   double g_backend_service_timeout = 5.0;
